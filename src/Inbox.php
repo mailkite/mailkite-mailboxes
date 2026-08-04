@@ -282,17 +282,14 @@ final class Inbox {
 			$this->redirect( $back, __( 'You have reached your daily send limit.', 'mailkite-mailboxes' ) );
 		}
 
-		$sent = wp_mail(
+		$error = $this->send_as_mailbox(
 			$recipients,
 			'' !== $subject ? $subject : __( '(no subject)', 'mailkite-mailboxes' ),
 			$body,
 			[ 'From: ' . $address ] // Forced — a user can only send as their own address.
 		);
 
-		$this->redirect(
-			$sent ? add_query_arg( 'mailkite_sent', '1', $back ) : $back,
-			$sent ? '' : __( 'The message could not be sent — check the email log.', 'mailkite-mailboxes' )
-		);
+		$this->redirect( '' === $error ? add_query_arg( 'mailkite_sent', '1', $back ) : $back, $error );
 	}
 
 	/**
@@ -327,14 +324,47 @@ final class Inbox {
 			$headers[] = 'In-Reply-To: ' . $msg_id;
 			$headers[] = 'References: ' . $msg_id;
 		}
-		$sent = wp_mail(
+		$error = $this->send_as_mailbox(
 			$to,
 			str_starts_with( strtolower( $subject ), 're:' ) ? $subject : 'Re: ' . $subject,
 			$body,
 			$headers
 		);
 
-		$this->redirect( $sent ? add_query_arg( 'mailkite_sent', '1', $back ) : $back, $sent ? '' : __( 'The reply could not be sent — check the email log.', 'mailkite-mailboxes' ) );
+		$this->redirect( '' === $error ? add_query_arg( 'mailkite_sent', '1', $back ) : $back, $error );
+	}
+
+	/**
+	 * Send one message as this mailbox, with failover OFF and the real reason captured.
+	 *
+	 * Personal mail must not silently reroute: if MailKite refuses (say the address sits
+	 * on a receive-only domain), the writer needs to see that, not a "sent" that went to
+	 * a local PHP mail() sink.
+	 *
+	 * @param string[]|string $to      Recipients.
+	 * @param string          $subject Subject.
+	 * @param string          $body    Body.
+	 * @param string[]        $headers Headers (From is already forced by the caller).
+	 * @return string '' on success, else the failure reason.
+	 */
+	private function send_as_mailbox( $to, string $subject, string $body, array $headers ): string {
+		$reason = '';
+		$no_fallback = static fn(): bool => false;
+		$capture     = static function ( $error ) use ( &$reason ): void {
+			$reason = $error instanceof \WP_Error ? $error->get_error_message() : '';
+		};
+
+		add_filter( 'mailkite_smtp_fallback_enabled', $no_fallback, 99 );
+		add_action( 'wp_mail_failed', $capture );
+		$sent = wp_mail( $to, $subject, $body, $headers );
+		remove_action( 'wp_mail_failed', $capture );
+		remove_filter( 'mailkite_smtp_fallback_enabled', $no_fallback, 99 );
+
+		if ( $sent ) {
+			return '';
+		}
+
+		return '' !== $reason ? $reason : __( 'The message could not be sent — check the email log.', 'mailkite-mailboxes' );
 	}
 
 	/**

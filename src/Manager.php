@@ -238,6 +238,44 @@ final class Manager {
 	}
 
 	/**
+	 * Is this user's address on a domain we no longer issue mailboxes for?
+	 *
+	 * Changing the mailbox domain only affects NEW claims — existing addresses keep
+	 * receiving mail where they are. Surfacing the mismatch is what stops someone
+	 * wondering why mail still goes out as the old domain.
+	 *
+	 * @param int $user_id User id.
+	 */
+	public static function is_off_domain( int $user_id ): bool {
+		$address = self::address( $user_id );
+		if ( '' === $address || '' === self::domain() ) {
+			return false;
+		}
+
+		return substr( $address, strpos( $address, '@' ) + 1 ) !== self::domain();
+	}
+
+	/**
+	 * Move a user's mailbox to the current domain, keeping their local part.
+	 * The old address stops working: its credential is revoked and mail sent to it
+	 * is no longer readable here.
+	 *
+	 * @param int $user_id User id.
+	 * @return string|WP_Error The new address.
+	 */
+	public static function move( int $user_id ) {
+		$address = self::address( $user_id );
+		if ( '' === $address ) {
+			return new WP_Error( 'none', __( 'No mailbox to move.', 'mailkite-mailboxes' ) );
+		}
+		$local = substr( $address, 0, (int) strpos( $address, '@' ) );
+
+		self::release( $user_id );
+
+		return self::claim( $user_id, $local );
+	}
+
+	/**
 	 * Auto-assign {username}@domain on first opportunity, when the admin enabled it.
 	 *
 	 * @param int $user_id User id.

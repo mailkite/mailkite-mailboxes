@@ -27,6 +27,7 @@ final class Admin {
 		add_action( 'admin_post_mailkite_mailboxes_claim', [ $this, 'handle_claim' ] );
 		add_action( 'admin_post_mailkite_mailboxes_release', [ $this, 'handle_release' ] );
 		add_action( 'admin_post_mailkite_mailboxes_regenerate', [ $this, 'handle_regenerate' ] );
+		add_action( 'admin_post_mailkite_mailboxes_move', [ $this, 'handle_move' ] );
 
 		add_action( 'show_user_profile', [ $this, 'render_profile' ] );
 		add_action( 'edit_user_profile', [ $this, 'render_profile' ] );
@@ -254,6 +255,34 @@ final class Admin {
 					<td>
 						<code style="user-select:all"><?php echo esc_html( $address ); ?></code>
 						<a href="<?php echo esc_url( admin_url( 'admin.php?page=mailkite-inbox' ) ); ?>" class="button button-small" style="margin-left:8px"><?php esc_html_e( 'Open inbox', 'mailkite-mailboxes' ); ?></a>
+						<?php if ( Manager::is_off_domain( $user->ID ) ) : ?>
+							<div class="notice notice-warning inline" style="margin:8px 0 0;padding:8px 10px">
+								<p style="margin:0 0 6px">
+									<?php
+									printf(
+										/* translators: %s: the domain mailboxes now use. */
+										esc_html__( 'This address is on an older domain. Mail sent from it still goes out as that domain — mailboxes now use %s.', 'mailkite-mailboxes' ),
+										'<code>' . esc_html( Manager::domain() ) . '</code>'
+									);
+									?>
+								</p>
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0">
+									<input type="hidden" name="action" value="mailkite_mailboxes_move" />
+									<input type="hidden" name="user_id" value="<?php echo esc_attr( (string) $user->ID ); ?>" />
+									<?php wp_nonce_field( 'mailkite_mailboxes_move' ); ?>
+									<button type="submit" class="button button-small">
+										<?php
+										printf(
+											/* translators: %s: the domain mailboxes now use. */
+											esc_html__( 'Move to %s', 'mailkite-mailboxes' ),
+											esc_html( Manager::domain() )
+										);
+										?>
+									</button>
+									<span class="description"><?php esc_html_e( 'The old address stops working.', 'mailkite-mailboxes' ); ?></span>
+								</form>
+							</div>
+						<?php endif; ?>
 					</td>
 				</tr>
 				<?php if ( $is_self ) : ?>
@@ -352,6 +381,18 @@ final class Admin {
 			wp_die( esc_html__( 'You can only regenerate your own password.', 'mailkite-mailboxes' ) );
 		}
 		$result = Manager::regenerate( $user_id );
+		$this->back( $user_id, is_wp_error( $result ) ? $result->get_error_message() : '' );
+	}
+
+	/**
+	 * Move a mailbox to the current domain (admin-post).
+	 */
+	public function handle_move(): void {
+		$user_id = $this->guard( 'mailkite_mailboxes_move' );
+		if ( get_current_user_id() !== $user_id && ! current_user_can( 'edit_users' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'mailkite-mailboxes' ) );
+		}
+		$result = Manager::move( $user_id );
 		$this->back( $user_id, is_wp_error( $result ) ? $result->get_error_message() : '' );
 	}
 
