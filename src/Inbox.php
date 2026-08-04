@@ -161,24 +161,26 @@ final class Inbox {
 				esc_html__( 'Mail for %s', 'mailkite-mailboxes' ),
 				'<code>' . esc_html( $address ) . '</code>'
 			) . '</span></p>'
-			// The list reloads itself so new mail appears without a manual refresh. Only the
-			// list does this — reloading under someone reading or composing would lose it.
-			. '<script>window.setTimeout(function(){window.location.reload();}, 60000);</script>';
-		$html .= '<table class="widefat striped"><thead><tr>'
+			// In wp-admin the Heartbeat API streams new rows into this table in place (see
+			// Live). On the front end wp.heartbeat is not enqueued, so that view falls back
+			// to a slow reload — still only ever on the LIST, never over a reply someone is
+			// part-way through writing.
+			. ( is_admin() ? '' : '<script>window.setTimeout(function(){window.location.reload();}, 120000);</script>' );
+		$html .= '<table class="widefat striped mailkite-inbox-list"><thead><tr>'
 			. '<th>' . ( $is_sent ? esc_html__( 'To', 'mailkite-mailboxes' ) : esc_html__( 'From', 'mailkite-mailboxes' ) ) . '</th>'
 			. '<th>' . esc_html__( 'Subject', 'mailkite-mailboxes' ) . '</th>'
 			. '<th>' . ( $is_sent ? esc_html__( 'Sent', 'mailkite-mailboxes' ) : esc_html__( 'Received', 'mailkite-mailboxes' ) ) . '</th>'
 			. '</tr></thead><tbody>';
 
 		if ( ! $messages ) {
-			$html .= '<tr><td colspan="3">'
+			$html .= '<tr class="mailkite-empty"><td colspan="3">'
 				. ( $is_sent ? esc_html__( 'Nothing sent from this address yet.', 'mailkite-mailboxes' ) : esc_html__( 'No mail yet.', 'mailkite-mailboxes' ) )
 				. '</td></tr>';
 		}
 		foreach ( $messages as $m ) {
 			$unread  = ! $is_sent && empty( $m->seen );
 			$subject = (string) $m->subject;
-			$html   .= '<tr>'
+			$html   .= '<tr data-id="' . esc_attr( (string) $m->id ) . '">'
 				. '<td>' . esc_html( (string) ( $is_sent ? $m->mail_to : $m->from_addr ) ) . '</td>'
 				. '<td><a href="' . esc_url( add_query_arg( 'uid', (int) $m->id ) ) . '">'
 					. ( $unread ? '<strong>' : '' )
@@ -283,9 +285,33 @@ final class Inbox {
 			$this->redirect( $back, __( 'You do not have a mailbox.', 'mailkite-mailboxes' ) );
 		}
 
+		$added = self::sync_user( $user_id );
+		if ( is_wp_error( $added ) ) {
+			$this->redirect( $back, $added->get_error_message() );
+		}
+
+		$this->redirect( add_query_arg( 'mailkite_synced', (int) $added, $back ), '' );
+	}
+
+	/**
+	 * Copy anything missing from MailKite into the local store for one user.
+	 *
+	 * Shared by the button and the scheduled reconcile so there is one definition of
+	 * "catch up" rather than two that drift.
+	 *
+	 * @param int $user_id The mailbox holder.
+	 * @return int|\WP_Error Number of messages stored.
+	 */
+	public static function sync_user( int $user_id ) {
+		$address = Manager::address( $user_id );
+		$secret  = Manager::secret( $user_id );
+		if ( '' === $address || '' === $secret ) {
+			return new \WP_Error( 'no_mailbox', __( 'No mailbox for this user.', 'mailkite-mailboxes' ) );
+		}
+
 		$result = Client::list_messages( $secret, $address );
 		if ( is_wp_error( $result ) ) {
-			$this->redirect( $back, $result->get_error_message() );
+			return $result;
 		}
 
 		$added = 0;
@@ -320,7 +346,7 @@ final class Inbox {
 			++$added;
 		}
 
-		$this->redirect( add_query_arg( 'mailkite_synced', $added, $back ), '' );
+		return $added;
 	}
 
 	/**

@@ -56,6 +56,7 @@ add_action(
 		}
 
 		( new Inbox() )->register();
+		( new Live() )->register();
 		( new Admin() )->register();
 	},
 	20 // After MailKite SMTP has booted.

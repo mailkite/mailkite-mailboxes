@@ -37,6 +37,10 @@ MailKite SMTP (this add-on uses its account connection) and a domain receiving m
 
 == Frequently Asked Questions ==
 
+= Does the scheduled sync need real cron? =
+
+It works out of the box, but WordPress cron only runs when someone visits the site, so a quiet site can be late. For punctual syncing, disable WP-Cron (`define( 'DISABLE_WP_CRON', true );`) and have your host call `wp-cron.php` on a real schedule.
+
 = Do users need a MailKite account? =
 
 No. The site connects once through MailKite SMTP; users just get an address.
@@ -51,6 +55,8 @@ No. The From address is set by the server to the address they hold.
 * Split out of MailKite SMTP 0.3.0 as its own plugin: mailbox policy, address claiming, credentials screen, Inbox screen, `[mailkite_inbox]`, reply.
 * Compose: write a new message from your mailbox, with recipient validation and the same daily send limit.
 * Inbox and Sent folders, a Refresh button, and the list refreshes itself every minute so new mail turns up on its own.
-* Mail is stored in WordPress by the shared webhook, so it stays readable after MailKite's retention window — and the inbox no longer waits on an API call to draw. "Sync from MailKite" pulls anything a webhook missed.
+* Mail is stored in WordPress by the shared webhook, so it stays readable after MailKite's retention window — and the inbox no longer waits on an API call to draw.
+* New mail appears in the open inbox on its own, without reloading the page.
+* A scheduled catch-up every 15 minutes (plus a "Sync from MailKite" button) copies in anything a webhook attempt missed.
 * Change an address, or move a mailbox to the site's current domain, without losing the old one to a failed attempt.
 * All mailbox actions live on their own "Your address" screen; the profile page shows a read-only summary and links to it.
