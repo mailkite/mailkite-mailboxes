@@ -24,7 +24,6 @@ final class Inbox {
 		add_shortcode( 'mailkite_inbox', [ $this, 'shortcode' ] );
 		add_action( 'admin_post_mailkite_mailboxes_reply', [ $this, 'handle_reply' ] );
 		add_action( 'admin_post_mailkite_mailboxes_compose', [ $this, 'handle_compose' ] );
-		add_action( 'admin_post_mailkite_mailboxes_sync', [ $this, 'handle_sync' ] );
 		add_filter( 'mailkite_smtp_mailbox_owner', [ Manager::class, 'owner_of_address' ], 10, 2 );
 	}
 
@@ -93,17 +92,6 @@ final class Inbox {
 		if ( isset( $_GET['mailkite_error'] ) ) {
 			$notice = '<div class="notice notice-error"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['mailkite_error'] ) ) ) . '</p></div>'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		}
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only view switch.
-		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only count from our own redirect.
-		if ( isset( $_GET['mailkite_synced'] ) ) {
-			$added  = absint( $_GET['mailkite_synced'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-			$notice = '<div class="notice notice-success"><p>' . esc_html(
-				$added
-					/* translators: %d: number of messages copied in. */
-					? sprintf( _n( 'Synced %d message from MailKite.', 'Synced %d messages from MailKite.', $added, 'mailkite-mailboxes' ), $added )
-					: __( 'Already up to date.', 'mailkite-mailboxes' )
-			) . '</p></div>';
-		}
 		if ( isset( $_GET['mailkite_sent'] ) ) {
 			$notice = '<div class="notice notice-success"><p>' . esc_html__( 'Message sent.', 'mailkite-mailboxes' ) . '</p></div>';
 		}
@@ -149,13 +137,6 @@ final class Inbox {
 			. esc_html__( 'Inbox', 'mailkite-mailboxes' ) . '</a>'
 			. '<a href="' . $sent_url . '"' . ( $is_sent ? ' style="font-weight:600"' : '' ) . '>'
 			. esc_html__( 'Sent', 'mailkite-mailboxes' ) . '</a></span>'
-			. '<a class="button button-small" href="' . esc_url( add_query_arg( 'refreshed', time() ) ) . '">'
-			. esc_html__( 'Refresh', 'mailkite-mailboxes' ) . '</a>'
-			. '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="margin:0">'
-			. '<input type="hidden" name="action" value="mailkite_mailboxes_sync" />'
-			. wp_nonce_field( 'mailkite_mailboxes_sync', '_wpnonce', true, false )
-			. '<button type="submit" class="button button-small">' . esc_html__( 'Sync from MailKite', 'mailkite-mailboxes' ) . '</button>'
-			. '</form>'
 			. '<span>' . sprintf(
 				/* translators: %s: the user's email address. */
 				esc_html__( 'Mail for %s', 'mailkite-mailboxes' ),
@@ -265,39 +246,11 @@ final class Inbox {
 	}
 
 	/**
-	 * Pull anything the webhook missed (admin-post).
-	 *
-	 * Push is the fast path, but a site that was offline stays missing that mail however
-	 * often MailKite retries. This is the repair: read the mailbox over the API and store
-	 * what is not here yet, matched on message id so nothing lands twice.
-	 */
-	public function handle_sync(): void {
-		if ( ! is_user_logged_in() ) {
-			wp_die( esc_html__( 'Permission denied.', 'mailkite-mailboxes' ) );
-		}
-		check_admin_referer( 'mailkite_mailboxes_sync' );
-
-		$user_id = get_current_user_id();
-		$address = Manager::address( $user_id );
-		$secret  = Manager::secret( $user_id );
-		$back    = admin_url( 'admin.php?page=mailkite-inbox' );
-		if ( '' === $address || '' === $secret ) {
-			$this->redirect( $back, __( 'You do not have a mailbox.', 'mailkite-mailboxes' ) );
-		}
-
-		$added = self::sync_user( $user_id );
-		if ( is_wp_error( $added ) ) {
-			$this->redirect( $back, $added->get_error_message() );
-		}
-
-		$this->redirect( add_query_arg( 'mailkite_synced', (int) $added, $back ), '' );
-	}
-
-	/**
 	 * Copy anything missing from MailKite into the local store for one user.
 	 *
-	 * Shared by the button and the scheduled reconcile so there is one definition of
-	 * "catch up" rather than two that drift.
+	 * There is no button for this: the webhook is the fast path, the scheduled reconcile
+	 * in Live is the repair, and a mailbox that needs a human to press Sync is a mailbox
+	 * that is quietly wrong for everyone who never thinks to press it.
 	 *
 	 * @param int $user_id The mailbox holder.
 	 * @return int|\WP_Error Number of messages stored.

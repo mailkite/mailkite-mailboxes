@@ -57,6 +57,6 @@ No. The From address is set by the server to the address they hold.
 * Inbox and Sent folders, a Refresh button, and the list refreshes itself every minute so new mail turns up on its own.
 * Mail is stored in WordPress by the shared webhook, so it stays readable after MailKite's retention window — and the inbox no longer waits on an API call to draw.
 * New mail appears in the open inbox on its own, without reloading the page.
-* A scheduled catch-up every 15 minutes (plus a "Sync from MailKite" button) copies in anything a webhook attempt missed.
+* A scheduled catch-up every 15 minutes copies in anything a webhook attempt missed — there is nothing to press.
 * Change an address, or move a mailbox to the site's current domain, without losing the old one to a failed attempt.
 * All mailbox actions live on their own "Your address" screen; the profile page shows a read-only summary and links to it.
