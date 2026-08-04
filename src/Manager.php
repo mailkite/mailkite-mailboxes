@@ -283,6 +283,30 @@ final class Manager {
 	}
 
 	/**
+	 * The user holding this exact address, if any — the parent stamps ownership on
+	 * incoming mail with this, which is what keeps personal mail out of the site log.
+	 *
+	 * @param int|null $owner   Value from earlier filters.
+	 * @param string   $address Bare, lower-cased address.
+	 * @return int|null
+	 */
+	public static function owner_of_address( $owner, string $address ) {
+		if ( $owner || '' === $address ) {
+			return $owner;
+		}
+		$users = get_users(
+			[
+				'meta_key'   => self::META_ADDRESS, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- exact-match lookup, tiny key space.
+				'meta_value' => $address,           // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_value
+				'fields'     => 'ID',
+				'number'     => 1,
+			]
+		);
+
+		return $users ? (int) $users[0] : null;
+	}
+
+	/**
 	 * Is this user's address on a domain we no longer issue mailboxes for?
 	 *
 	 * Changing the mailbox domain only affects NEW claims — existing addresses keep

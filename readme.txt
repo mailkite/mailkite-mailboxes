@@ -29,6 +29,8 @@ An add-on for **MailKite SMTP**. Where that plugin makes your site's email work,
 
 Each mailbox gets a credential scoped to that single address — never an account-wide key — encrypted at rest. A user can only read their own mail, and can only send *as* their own address. Deleting a WordPress user revokes their credential.
 
+Personal mail is kept out of the site-wide email log: messages addressed to someone's mailbox are stamped with their user id when they arrive, and every read is scoped to the owner in the query itself — an administrator browsing the log does not see them.
+
 = Requirements =
 
 MailKite SMTP (this add-on uses its account connection) and a domain receiving mail on MailKite.
@@ -49,5 +51,6 @@ No. The From address is set by the server to the address they hold.
 * Split out of MailKite SMTP 0.3.0 as its own plugin: mailbox policy, address claiming, credentials screen, Inbox screen, `[mailkite_inbox]`, reply.
 * Compose: write a new message from your mailbox, with recipient validation and the same daily send limit.
 * Inbox and Sent folders, a Refresh button, and the list refreshes itself every minute so new mail turns up on its own.
+* Mail is stored in WordPress by the shared webhook, so it stays readable after MailKite's retention window — and the inbox no longer waits on an API call to draw. "Sync from MailKite" pulls anything a webhook missed.
 * Change an address, or move a mailbox to the site's current domain, without losing the old one to a failed attempt.
 * All mailbox actions live on their own "Your address" screen; the profile page shows a read-only summary and links to it.

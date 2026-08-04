@@ -24,6 +24,8 @@ final class Inbox {
 		add_shortcode( 'mailkite_inbox', [ $this, 'shortcode' ] );
 		add_action( 'admin_post_mailkite_mailboxes_reply', [ $this, 'handle_reply' ] );
 		add_action( 'admin_post_mailkite_mailboxes_compose', [ $this, 'handle_compose' ] );
+		add_action( 'admin_post_mailkite_mailboxes_sync', [ $this, 'handle_sync' ] );
+		add_filter( 'mailkite_smtp_mailbox_owner', [ Manager::class, 'owner_of_address' ], 10, 2 );
 	}
 
 	/**
@@ -92,6 +94,16 @@ final class Inbox {
 			$notice = '<div class="notice notice-error"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['mailkite_error'] ) ) ) . '</p></div>'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		}
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only view switch.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only count from our own redirect.
+		if ( isset( $_GET['mailkite_synced'] ) ) {
+			$added  = absint( $_GET['mailkite_synced'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$notice = '<div class="notice notice-success"><p>' . esc_html(
+				$added
+					/* translators: %d: number of messages copied in. */
+					? sprintf( _n( 'Synced %d message from MailKite.', 'Synced %d messages from MailKite.', $added, 'mailkite-mailboxes' ), $added )
+					: __( 'Already up to date.', 'mailkite-mailboxes' )
+			) . '</p></div>';
+		}
 		if ( isset( $_GET['mailkite_sent'] ) ) {
 			$notice = '<div class="notice notice-success"><p>' . esc_html__( 'Message sent.', 'mailkite-mailboxes' ) . '</p></div>';
 		}
@@ -118,11 +130,13 @@ final class Inbox {
 	 * @return string
 	 */
 	private function render_list( string $secret, string $address, string $mailbox = 'INBOX' ): string {
-		$result = Client::list_messages( $secret, $address, $mailbox );
-		if ( is_wp_error( $result ) ) {
-			return '<p>' . esc_html( $result->get_error_message() ) . '</p>';
-		}
-		$messages = (array) ( $result['messages'] ?? [] );
+		// Read the LOCAL archive the webhook fills, not the API: MailKite's retention is
+		// finite, and a round-trip per page view is what made this screen slow.
+		$messages = \MailKite\Smtp\Log\Store::mailbox_messages(
+			get_current_user_id(),
+			'Sent' === $mailbox ? 'outbound' : 'inbound',
+			100
+		);
 
 		$is_sent   = 'Sent' === $mailbox;
 		$inbox_url = esc_url( remove_query_arg( [ 'folder', 'uid', 'compose' ] ) );
@@ -137,6 +151,11 @@ final class Inbox {
 			. esc_html__( 'Sent', 'mailkite-mailboxes' ) . '</a></span>'
 			. '<a class="button button-small" href="' . esc_url( add_query_arg( 'refreshed', time() ) ) . '">'
 			. esc_html__( 'Refresh', 'mailkite-mailboxes' ) . '</a>'
+			. '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="margin:0">'
+			. '<input type="hidden" name="action" value="mailkite_mailboxes_sync" />'
+			. wp_nonce_field( 'mailkite_mailboxes_sync', '_wpnonce', true, false )
+			. '<button type="submit" class="button button-small">' . esc_html__( 'Sync from MailKite', 'mailkite-mailboxes' ) . '</button>'
+			. '</form>'
 			. '<span>' . sprintf(
 				/* translators: %s: the user's email address. */
 				esc_html__( 'Mail for %s', 'mailkite-mailboxes' ),
@@ -157,16 +176,16 @@ final class Inbox {
 				. '</td></tr>';
 		}
 		foreach ( $messages as $m ) {
-			$unread  = ! str_contains( (string) ( $m['flags'] ?? '' ), 'Seen' );
-			$subject = (string) ( $m['subject'] ?? '' );
+			$unread  = ! $is_sent && empty( $m->seen );
+			$subject = (string) $m->subject;
 			$html   .= '<tr>'
-				. '<td>' . esc_html( (string) ( $is_sent ? ( $m['to_addr'] ?? '' ) : ( $m['from_addr'] ?? '' ) ) ) . '</td>'
-				. '<td><a href="' . esc_url( add_query_arg( 'uid', (int) $m['uid'] ) ) . '">'
+				. '<td>' . esc_html( (string) ( $is_sent ? $m->mail_to : $m->from_addr ) ) . '</td>'
+				. '<td><a href="' . esc_url( add_query_arg( 'uid', (int) $m->id ) ) . '">'
 					. ( $unread ? '<strong>' : '' )
 					. esc_html( '' !== $subject ? $subject : __( '(no subject)', 'mailkite-mailboxes' ) )
 					. ( $unread ? '</strong>' : '' )
 				. '</a></td>'
-				. '<td>' . esc_html( $this->local_time( (string) ( $m['internaldate'] ?? '' ) ) ) . '</td>'
+				. '<td>' . esc_html( $this->local_time( (string) $m->created_at ) ) . '</td>'
 				. '</tr>';
 		}
 
@@ -182,51 +201,57 @@ final class Inbox {
 	 * @return string
 	 */
 	private function render_message( string $secret, string $address, int $uid, string $mailbox = 'INBOX' ): string {
-		$raw = Client::raw( $secret, $address, $uid, $mailbox );
-		if ( is_wp_error( $raw ) ) {
-			return '<p>' . esc_html( $raw->get_error_message() ) . '</p>';
+		// Store scopes the lookup to this user, so someone else's id simply finds nothing.
+		$row = \MailKite\Smtp\Log\Store::get( $uid, get_current_user_id() );
+		if ( ! $row ) {
+			return '<p>' . esc_html__( 'That message is not in your mailbox.', 'mailkite-mailboxes' ) . '</p>';
 		}
-		$parsed  = Mime::parse( $raw );
-		$headers = $parsed['headers'];
-		$from    = (string) ( $headers['from'] ?? '' );
-		$subject = (string) ( $headers['subject'] ?? __( '(no subject)', 'mailkite-mailboxes' ) );
+		\MailKite\Smtp\Log\Store::mark_seen( $uid, get_current_user_id() );
 
-		// Opening a message marks it read, exactly as an IMAP client would.
-		Client::set_flags( $secret, $address, $uid, 'Seen', $mailbox );
+		$is_sent = 'outbound' === $row->direction;
+		$back    = remove_query_arg( 'uid' );
+		$subject = '' !== (string) $row->subject ? (string) $row->subject : __( '(no subject)', 'mailkite-mailboxes' );
 
-		$back  = remove_query_arg( 'uid' );
 		$html  = '<p><a href="' . esc_url( $back ) . '">&larr; ' . esc_html__( 'Back to the inbox', 'mailkite-mailboxes' ) . '</a></p>';
 		$html .= '<table class="widefat striped" style="max-width:860px"><tbody>'
-			. '<tr><td style="width:7em"><strong>' . esc_html__( 'From', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( $from ) . '</td></tr>'
-			. '<tr><td><strong>' . esc_html__( 'To', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( (string) ( $headers['to'] ?? $address ) ) . '</td></tr>'
+			. '<tr><td style="width:7em"><strong>' . esc_html__( 'From', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( (string) $row->from_addr ) . '</td></tr>'
+			. '<tr><td><strong>' . esc_html__( 'To', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( (string) $row->mail_to ) . '</td></tr>'
 			. '<tr><td><strong>' . esc_html__( 'Subject', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( $subject ) . '</td></tr>'
-			. '<tr><td><strong>' . esc_html__( 'Date', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( (string) ( $headers['date'] ?? '' ) ) . '</td></tr>';
-		if ( $parsed['attachments'] ) {
-			$html .= '<tr><td><strong>' . esc_html__( 'Attachments', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( implode( ', ', $parsed['attachments'] ) ) . '</td></tr>';
-		}
-		$html .= '</tbody></table>';
+			. '<tr><td><strong>' . esc_html__( 'Date', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( $this->local_time( (string) $row->created_at ) ) . '</td></tr>'
+			. '</tbody></table>';
 
-		if ( '' !== $parsed['text'] ) {
+		if ( ! empty( $row->body_text ) ) {
 			$html .= '<pre style="background:#fff;border:1px solid #dcdcde;border-radius:4px;padding:16px;max-width:860px;white-space:pre-wrap">'
-				. esc_html( $parsed['text'] ) . '</pre>';
-		} elseif ( '' !== $parsed['html'] ) {
+				. esc_html( (string) $row->body_text ) . '</pre>';
+		} elseif ( ! empty( $row->body_html ) ) {
 			$html .= '<div style="background:#fff;border:1px solid #dcdcde;border-radius:4px;padding:16px;max-width:860px">'
-				. wp_kses_post( $parsed['html'] ) . '</div>';
+				. wp_kses_post( (string) $row->body_html ) . '</div>';
 		} else {
 			$html .= '<p>' . esc_html__( '(no readable body)', 'mailkite-mailboxes' ) . '</p>';
 		}
 
-		if ( 'Sent' === $mailbox ) {
+		$files = \MailKite\Smtp\Log\Store::attachments( $uid );
+		if ( $files ) {
+			$html .= '<h2>' . esc_html__( 'Attachments', 'mailkite-mailboxes' ) . '</h2><ul>';
+			foreach ( $files as $file ) {
+				$html .= '<li>' . ( $file->url
+					? '<a href="' . esc_url( (string) $file->url ) . '" target="_blank" rel="noopener">' . esc_html( (string) $file->filename ) . '</a>'
+					: esc_html( (string) $file->filename ) )
+					. ' <span class="description">' . esc_html( size_format( (int) $file->size ) ) . '</span></li>';
+			}
+			$html .= '</ul>';
+		}
+
+		if ( $is_sent ) {
 			return $html; // Replying to your own outgoing copy makes no sense.
 		}
 
-		// Reply — sent through the plugin's normal mailer with From forced to this user.
 		$html .= '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="max-width:860px;margin-top:1em">'
 			. '<input type="hidden" name="action" value="mailkite_mailboxes_reply" />'
 			. '<input type="hidden" name="uid" value="' . esc_attr( (string) $uid ) . '" />'
-			. '<input type="hidden" name="to" value="' . esc_attr( $from ) . '" />'
+			. '<input type="hidden" name="to" value="' . esc_attr( (string) $row->from_addr ) . '" />'
 			. '<input type="hidden" name="subject" value="' . esc_attr( $subject ) . '" />'
-			. '<input type="hidden" name="message_id" value="' . esc_attr( (string) ( $headers['message-id'] ?? '' ) ) . '" />'
+			. '<input type="hidden" name="message_id" value="' . esc_attr( (string) $row->thread_id ) . '" />'
 			. '<input type="hidden" name="redirect_to" value="' . esc_attr( $back ) . '" />'
 			. wp_nonce_field( 'mailkite_mailboxes_reply', '_wpnonce', true, false )
 			. '<h2>' . esc_html__( 'Reply', 'mailkite-mailboxes' ) . '</h2>'
@@ -235,6 +260,67 @@ final class Inbox {
 			. '</form>';
 
 		return $html;
+	}
+
+	/**
+	 * Pull anything the webhook missed (admin-post).
+	 *
+	 * Push is the fast path, but a site that was offline stays missing that mail however
+	 * often MailKite retries. This is the repair: read the mailbox over the API and store
+	 * what is not here yet, matched on message id so nothing lands twice.
+	 */
+	public function handle_sync(): void {
+		if ( ! is_user_logged_in() ) {
+			wp_die( esc_html__( 'Permission denied.', 'mailkite-mailboxes' ) );
+		}
+		check_admin_referer( 'mailkite_mailboxes_sync' );
+
+		$user_id = get_current_user_id();
+		$address = Manager::address( $user_id );
+		$secret  = Manager::secret( $user_id );
+		$back    = admin_url( 'admin.php?page=mailkite-inbox' );
+		if ( '' === $address || '' === $secret ) {
+			$this->redirect( $back, __( 'You do not have a mailbox.', 'mailkite-mailboxes' ) );
+		}
+
+		$result = Client::list_messages( $secret, $address );
+		if ( is_wp_error( $result ) ) {
+			$this->redirect( $back, $result->get_error_message() );
+		}
+
+		$added = 0;
+		foreach ( (array) ( $result['messages'] ?? [] ) as $m ) {
+			$message_id = 'mk-uid-' . $address . '-' . (int) ( $m['uid'] ?? 0 );
+			if ( \MailKite\Smtp\Log\Store::exists( $message_id ) ) {
+				continue;
+			}
+			$raw    = Client::raw( $secret, $address, (int) $m['uid'] );
+			$parsed = is_wp_error( $raw ) ? [
+				'text' => '',
+				'html' => '',
+			] : Mime::parse( $raw );
+
+			\MailKite\Smtp\Log\Store::insert(
+				[
+					'created_at'    => gmdate( 'Y-m-d H:i:s', (int) strtotime( (string) ( $m['internaldate'] ?? 'now' ) ) ),
+					'mail_to'       => (string) ( $m['to_addr'] ?? $address ),
+					'from_addr'     => (string) ( $m['from_addr'] ?? '' ),
+					'subject'       => (string) ( $m['subject'] ?? '' ),
+					'mailer'        => 'inbound',
+					'direction'     => 'inbound',
+					'status'        => 'received',
+					'redacted'      => 0,
+					'owner_user_id' => $user_id,
+					'message_id'    => $message_id,
+					'seen'          => str_contains( (string) ( $m['flags'] ?? '' ), 'Seen' ) ? 1 : 0,
+				],
+				(string) ( $parsed['text'] ?? '' ),
+				(string) ( $parsed['html'] ?? '' )
+			);
+			++$added;
+		}
+
+		$this->redirect( add_query_arg( 'mailkite_synced', $added, $back ), '' );
 	}
 
 	/**
