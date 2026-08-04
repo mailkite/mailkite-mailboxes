@@ -17,8 +17,10 @@ defined( 'ABSPATH' ) || exit;
  *    infrastructure. A full page reload was the alternative, and it discards scroll
  *    position and anything half-typed.
  *  - **Reconcile** (every 15 minutes) copies in whatever the webhook never delivered.
- *    MailKite does not retry failed webhook deliveries, so without this a site that was
- *    briefly down simply loses that mail locally.
+ *    MailKite does retry a failed delivery on its own — seven times over about 27 hours —
+ *    so this is not the first line of defence. It covers what retries structurally cannot:
+ *    a site down longer than that window, mail that arrived before the webhook was
+ *    registered, and a WordPress that returned 200 and then failed to write the row.
  */
 final class Live {
 
