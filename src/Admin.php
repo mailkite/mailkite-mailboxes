@@ -28,6 +28,7 @@ final class Admin {
 		add_action( 'admin_post_mailkite_mailboxes_release', [ $this, 'handle_release' ] );
 		add_action( 'admin_post_mailkite_mailboxes_regenerate', [ $this, 'handle_regenerate' ] );
 		add_action( 'admin_post_mailkite_mailboxes_move', [ $this, 'handle_move' ] );
+		add_action( 'admin_post_mailkite_mailboxes_rename', [ $this, 'handle_rename' ] );
 
 		add_action( 'show_user_profile', [ $this, 'render_profile' ] );
 		add_action( 'edit_user_profile', [ $this, 'render_profile' ] );
@@ -255,6 +256,17 @@ final class Admin {
 					<td>
 						<code style="user-select:all"><?php echo esc_html( $address ); ?></code>
 						<a href="<?php echo esc_url( admin_url( 'admin.php?page=mailkite-inbox' ) ); ?>" class="button button-small" style="margin-left:8px"><?php esc_html_e( 'Open inbox', 'mailkite-mailboxes' ); ?></a>
+						<?php if ( Settings::get( 'self_register' ) || current_user_can( 'edit_users' ) ) : ?>
+							<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap">
+								<input type="hidden" name="action" value="mailkite_mailboxes_rename" />
+								<input type="hidden" name="user_id" value="<?php echo esc_attr( (string) $user->ID ); ?>" />
+								<?php wp_nonce_field( 'mailkite_mailboxes_rename' ); ?>
+								<input type="text" name="local" value="<?php echo esc_attr( substr( $address, 0, (int) strpos( $address, '@' ) ) ); ?>" class="regular-text" style="max-width:12em" aria-label="<?php esc_attr_e( 'New address', 'mailkite-mailboxes' ); ?>" />
+								<span>@<?php echo esc_html( Manager::domain() ); ?></span>
+								<button type="submit" class="button"><?php esc_html_e( 'Change address', 'mailkite-mailboxes' ); ?></button>
+							</form>
+							<p class="description" style="margin-top:4px"><?php esc_html_e( 'Changing it stops mail to the old address and replaces the password — update any mail app afterwards.', 'mailkite-mailboxes' ); ?></p>
+						<?php endif; ?>
 						<?php if ( Manager::is_off_domain( $user->ID ) ) : ?>
 							<div class="notice notice-warning inline" style="margin:8px 0 0;padding:8px 10px">
 								<p style="margin:0 0 6px">
@@ -381,6 +393,25 @@ final class Admin {
 			wp_die( esc_html__( 'You can only regenerate your own password.', 'mailkite-mailboxes' ) );
 		}
 		$result = Manager::regenerate( $user_id );
+		$this->back( $user_id, is_wp_error( $result ) ? $result->get_error_message() : '' );
+	}
+
+	/**
+	 * Change the local part of a mailbox (admin-post).
+	 */
+	public function handle_rename(): void {
+		$user_id = $this->guard( 'mailkite_mailboxes_rename' );
+		if ( get_current_user_id() !== $user_id && ! current_user_can( 'edit_users' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'mailkite-mailboxes' ) );
+		}
+		// Users may only rename themselves when the site lets them choose addresses;
+		// an administrator can always fix someone's address.
+		if ( get_current_user_id() === $user_id && ! Settings::get( 'self_register' ) && ! current_user_can( 'edit_users' ) ) {
+			wp_die( esc_html__( 'Choosing your own address is disabled on this site.', 'mailkite-mailboxes' ) );
+		}
+
+		$local  = isset( $_POST['local'] ) ? sanitize_text_field( wp_unslash( $_POST['local'] ) ) : '';
+		$result = Manager::rename( $user_id, $local );
 		$this->back( $user_id, is_wp_error( $result ) ? $result->get_error_message() : '' );
 	}
 

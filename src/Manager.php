@@ -154,14 +154,9 @@ final class Manager {
 		}
 
 		$local = self::normalize_local( '' !== $raw ? $raw : $user->user_login );
-		if ( '' === $local ) {
-			return new WP_Error( 'invalid', __( 'Choose an address using letters, numbers, dots, dashes or underscores.', 'mailkite-mailboxes' ) );
-		}
-		if ( in_array( $local, self::reserved(), true ) ) {
-			return new WP_Error( 'reserved', __( 'That address is reserved.', 'mailkite-mailboxes' ) );
-		}
-		if ( self::taken( $local, $user_id ) ) {
-			return new WP_Error( 'taken', __( 'That address is already taken.', 'mailkite-mailboxes' ) );
+		$valid = self::validate_local( $local, $user_id );
+		if ( is_wp_error( $valid ) ) {
+			return $valid;
 		}
 
 		$created = Client::create_app_password( self::domain(), $local, sprintf( 'WordPress: %s', $user->user_login ) );
@@ -183,6 +178,56 @@ final class Manager {
 		do_action( 'mailkite_mailboxes_claimed', $user_id, $address );
 
 		return $address;
+	}
+
+	/**
+	 * Is this local part usable by this user? Checked before anything is given up,
+	 * so a rejected rename never costs someone the address they already had.
+	 *
+	 * @param string $local   Normalized local part.
+	 * @param int    $user_id The claimant.
+	 * @return true|WP_Error
+	 */
+	private static function validate_local( string $local, int $user_id ) {
+		if ( '' === $local ) {
+			return new WP_Error( 'invalid', __( 'Choose an address using letters, numbers, dots, dashes or underscores.', 'mailkite-mailboxes' ) );
+		}
+		if ( in_array( $local, self::reserved(), true ) ) {
+			return new WP_Error( 'reserved', __( 'That address is reserved.', 'mailkite-mailboxes' ) );
+		}
+		if ( self::taken( $local, $user_id ) ) {
+			return new WP_Error( 'taken', __( 'That address is already taken.', 'mailkite-mailboxes' ) );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Change the local part of an existing mailbox, keeping the current domain.
+	 * The old address stops receiving and its credential is revoked.
+	 *
+	 * @param int    $user_id User id.
+	 * @param string $raw     Requested new local part.
+	 * @return string|WP_Error The new address.
+	 */
+	public static function rename( int $user_id, string $raw ) {
+		$current = self::address( $user_id );
+		if ( '' === $current ) {
+			return new WP_Error( 'none', __( 'No mailbox to rename.', 'mailkite-mailboxes' ) );
+		}
+		$local = self::normalize_local( $raw );
+		if ( $local . '@' . self::domain() === $current ) {
+			return $current; // Nothing to do.
+		}
+		// Validate BEFORE releasing: a rejected name must not cost the old address.
+		$valid = self::validate_local( $local, $user_id );
+		if ( is_wp_error( $valid ) ) {
+			return $valid;
+		}
+
+		self::release( $user_id );
+
+		return self::claim( $user_id, $local );
 	}
 
 	/**
@@ -269,6 +314,10 @@ final class Manager {
 			return new WP_Error( 'none', __( 'No mailbox to move.', 'mailkite-mailboxes' ) );
 		}
 		$local = substr( $address, 0, (int) strpos( $address, '@' ) );
+		$valid = self::validate_local( $local, $user_id );
+		if ( is_wp_error( $valid ) ) {
+			return $valid;
+		}
 
 		self::release( $user_id );
 
