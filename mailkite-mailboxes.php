@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name:       MailKite Mailboxes – Real Email Addresses & Inbox for WordPress Users
+ * Plugin Name:       MailKite Mailboxes – Real Email Addresses & Inbox for Your Users
  * Plugin URI:        https://mailkite.dev/docs/integrations/wordpress
  * Description:       Give WordPress users a real email address on your domain — readable in wp-admin, on the front end, and in any IMAP mail client.
  * Version:           0.1.0

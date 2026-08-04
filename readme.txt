@@ -1,4 +1,4 @@
-=== MailKite Mailboxes – Real Email Addresses & Inbox for WordPress Users ===
+=== MailKite Mailboxes – Real Email Addresses & Inbox for Your Users ===
 Contributors: bucabay
 Tags: email, inbox, imap, mailbox, webmail
 Requires at least: 6.5
