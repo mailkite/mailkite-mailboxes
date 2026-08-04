@@ -53,7 +53,8 @@ final class Manager {
 	 */
 	public static function reserved(): array {
 		$raw  = (string) Settings::get( 'reserved' );
-		$list = preg_split( '/[\s,]+/', strtolower( $raw ), -1, PREG_SPLIT_NO_EMPTY ) ?: [];
+		$list = preg_split( '/[\s,]+/', strtolower( $raw ), -1, PREG_SPLIT_NO_EMPTY );
+		$list = is_array( $list ) ? $list : [];
 
 		/**
 		 * Filters the reserved local parts users may never claim.
@@ -405,7 +406,7 @@ final class Manager {
 				'number'   => 200,
 			]
 		);
-		$rows = [];
+		$rows  = [];
 		foreach ( $users as $user ) {
 			$rows[] = [
 				'user_id' => (int) $user->ID,

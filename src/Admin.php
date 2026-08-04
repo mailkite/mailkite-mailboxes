@@ -109,7 +109,15 @@ final class Admin {
 		}
 		Settings::update( $input );
 
-		wp_safe_redirect( add_query_arg( [ 'page' => 'mailkite-mailboxes', 'updated' => '1' ], admin_url( 'admin.php' ) ) );
+		wp_safe_redirect(
+			add_query_arg(
+				[
+					'page'    => 'mailkite-mailboxes',
+					'updated' => '1',
+				],
+				admin_url( 'admin.php' )
+			)
+		);
 		exit;
 	}
 
@@ -424,7 +432,8 @@ final class Admin {
 	 */
 	public function handle_claim(): void {
 		$user_id = $this->guard( 'mailkite_mailboxes_claim' );
-		$local   = isset( $_POST['local'] ) ? sanitize_text_field( wp_unslash( $_POST['local'] ) ) : '';
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- guard() called check_admin_referer() on the line above.
+		$local = isset( $_POST['local'] ) ? sanitize_text_field( wp_unslash( $_POST['local'] ) ) : '';
 
 		if ( get_current_user_id() !== $user_id && ! current_user_can( 'edit_users' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'mailkite-mailboxes' ) );
@@ -475,6 +484,7 @@ final class Admin {
 			wp_die( esc_html__( 'Choosing your own address is disabled on this site.', 'mailkite-mailboxes' ) );
 		}
 
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- guard() called check_admin_referer() at the top of this handler.
 		$local  = isset( $_POST['local'] ) ? sanitize_text_field( wp_unslash( $_POST['local'] ) ) : '';
 		$result = Manager::rename( $user_id, $local );
 		$this->back( $user_id, is_wp_error( $result ) ? $result->get_error_message() : '' );

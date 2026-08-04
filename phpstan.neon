@@ -1,0 +1,17 @@
+includes:
+    - vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+    level: 6
+    treatPhpDocTypesAsCertain: false
+    paths:
+        - src
+        - mailkite-mailboxes.php
+        - uninstall.php
+    # The parent plugin is a hard dependency (Requires Plugins) but is not installed in
+    # this repo, so its classes are unresolvable here. Ignoring the reference keeps the
+    # rest of the analysis honest rather than switching the whole check off.
+    ignoreErrors:
+        -
+            identifier: class.notFound
+            path: src/*

@@ -92,6 +92,7 @@ final class Inbox {
 		if ( isset( $_GET['mailkite_error'] ) ) {
 			$notice = '<div class="notice notice-error"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['mailkite_error'] ) ) ) . '</p></div>'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		}
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only flag from our own redirect.
 		if ( isset( $_GET['mailkite_sent'] ) ) {
 			$notice = '<div class="notice notice-success"><p>' . esc_html__( 'Message sent.', 'mailkite-mailboxes' ) . '</p></div>';
 		}
@@ -115,6 +116,7 @@ final class Inbox {
 	 *
 	 * @param string $secret  App password.
 	 * @param string $address Mailbox address.
+	 * @param string $mailbox INBOX or Sent.
 	 * @return string
 	 */
 	private function render_list( string $secret, string $address, string $mailbox = 'INBOX' ): string {
@@ -130,7 +132,7 @@ final class Inbox {
 		$inbox_url = esc_url( remove_query_arg( [ 'folder', 'uid', 'compose' ] ) );
 		$sent_url  = esc_url( add_query_arg( 'folder', 'sent', remove_query_arg( [ 'uid', 'compose' ] ) ) );
 
-		$html  = '<p style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+		$html = '<p style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
 			. '<a class="button button-primary" href="' . esc_url( add_query_arg( 'compose', 1 ) ) . '">'
 			. esc_html__( 'Compose', 'mailkite-mailboxes' ) . '</a>'
 			. '<span><a href="' . $inbox_url . '" style="margin-right:10px' . ( $is_sent ? '' : ';font-weight:600' ) . '">'
@@ -181,6 +183,7 @@ final class Inbox {
 	 * @param string $secret  App password.
 	 * @param string $address Mailbox address.
 	 * @param int    $uid     Message uid.
+	 * @param string $mailbox INBOX or Sent — decides where "back" returns to.
 	 * @return string
 	 */
 	private function render_message( string $secret, string $address, int $uid, string $mailbox = 'INBOX' ): string {
@@ -192,10 +195,16 @@ final class Inbox {
 		\MailKite\Smtp\Log\Store::mark_seen( $uid, get_current_user_id() );
 
 		$is_sent = 'outbound' === $row->direction;
-		$back    = remove_query_arg( 'uid' );
+		// Return to the folder the reader came from — opening a sent message and being
+		// dropped back in the inbox loses your place.
+		$back    = 'Sent' === $mailbox
+			? add_query_arg( 'folder', 'sent', remove_query_arg( 'uid' ) )
+			: remove_query_arg( [ 'uid', 'folder' ] );
 		$subject = '' !== (string) $row->subject ? (string) $row->subject : __( '(no subject)', 'mailkite-mailboxes' );
 
-		$html  = '<p><a href="' . esc_url( $back ) . '">&larr; ' . esc_html__( 'Back to the inbox', 'mailkite-mailboxes' ) . '</a></p>';
+		$html  = '<p><a href="' . esc_url( $back ) . '">&larr; '
+			. ( 'Sent' === $mailbox ? esc_html__( 'Back to sent', 'mailkite-mailboxes' ) : esc_html__( 'Back to the inbox', 'mailkite-mailboxes' ) )
+			. '</a></p>';
 		$html .= '<table class="widefat striped" style="max-width:860px"><tbody>'
 			. '<tr><td style="width:7em"><strong>' . esc_html__( 'From', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( (string) $row->from_addr ) . '</td></tr>'
 			. '<tr><td><strong>' . esc_html__( 'To', 'mailkite-mailboxes' ) . '</strong></td><td>' . esc_html( (string) $row->mail_to ) . '</td></tr>'
@@ -437,7 +446,7 @@ final class Inbox {
 	 * @return string '' on success, else the failure reason.
 	 */
 	private function send_as_mailbox( $to, string $subject, string $body, array $headers ): string {
-		$reason = '';
+		$reason      = '';
 		$no_fallback = static fn(): bool => false;
 		$capture     = static function ( $error ) use ( &$reason ): void {
 			$reason = $error instanceof \WP_Error ? $error->get_error_message() : '';

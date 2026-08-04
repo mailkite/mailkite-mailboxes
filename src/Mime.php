@@ -58,7 +58,8 @@ final class Mime {
 	 */
 	private static function headers( string $head ): array {
 		$headers = [];
-		$lines   = preg_split( '/\n(?![ \t])/', $head ) ?: [];
+		$lines   = preg_split( '/\n(?![ \t])/', $head );
+		$lines   = is_array( $lines ) ? $lines : [];
 		foreach ( $lines as $line ) {
 			$line = preg_replace( '/\n[ \t]+/', ' ', $line ) ?? '';
 			$pos  = strpos( $line, ':' );
@@ -74,10 +75,10 @@ final class Mime {
 	/**
 	 * Recursively collect text/html/attachments from a multipart body.
 	 *
-	 * @param string                                                                             $body     Multipart body.
-	 * @param string                                                                             $boundary Boundary token.
+	 * @param string                                                                                   $body     Multipart body.
+	 * @param string                                                                                   $boundary Boundary token.
 	 * @param array{headers: array<string, string>, text: string, html: string, attachments: string[]} $result   Accumulator (by reference).
-	 * @param int                                                                                $depth    Recursion guard.
+	 * @param int                                                                                      $depth    Recursion guard.
 	 */
 	private static function walk_parts( string $body, string $boundary, array &$result, int $depth = 0 ): void {
 		if ( $depth > 5 ) {
