@@ -20,7 +20,7 @@ An add-on for **MailKite SMTP**. Where that plugin makes your site's email work,
 = What it does =
 
 * **Real addresses for WordPress users** — assign `{username}@yourdomain.com` automatically, or let users choose their own. Both are off until you switch them on.
-* **A real inbox in WordPress** — an Inbox screen in wp-admin plus a `[mailkite_inbox]` shortcode for members-only pages. Read, reply, done.
+* **A real inbox in WordPress** — an Inbox screen in wp-admin plus a `[mailkite_inbox]` shortcode for members-only pages. Read, reply, and compose new messages.
 * **Works in any mail client** — each mailbox comes with IMAP settings and an app password, so Apple Mail, Thunderbird or a phone works out of the box.
 * **The same password is an API token** for that one address, so an agent or a script can read the mailbox over HTTPS.
 * **You stay in control** — restrict by role, reserve addresses nobody may claim (`postmaster`, `billing`, …), cap how much each user can send per day, and revoke any mailbox at a click.
@@ -47,3 +47,4 @@ No. The From address is set by the server to the address they hold.
 
 = 0.1.0 =
 * Split out of MailKite SMTP 0.3.0 as its own plugin: mailbox policy, address claiming, credentials screen, Inbox screen, `[mailkite_inbox]`, reply.
+* Compose: write a new message from your mailbox, with recipient validation and the same daily send limit.

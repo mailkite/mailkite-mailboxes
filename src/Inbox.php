@@ -23,6 +23,7 @@ final class Inbox {
 		add_action( 'admin_menu', [ $this, 'add_menu' ] );
 		add_shortcode( 'mailkite_inbox', [ $this, 'shortcode' ] );
 		add_action( 'admin_post_mailkite_mailboxes_reply', [ $this, 'handle_reply' ] );
+		add_action( 'admin_post_mailkite_mailboxes_compose', [ $this, 'handle_compose' ] );
 	}
 
 	/**
@@ -92,10 +93,14 @@ final class Inbox {
 		}
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only view switch.
 		if ( isset( $_GET['mailkite_sent'] ) ) {
-			$notice = '<div class="notice notice-success"><p>' . esc_html__( 'Reply sent.', 'mailkite-mailboxes' ) . '</p></div>';
+			$notice = '<div class="notice notice-success"><p>' . esc_html__( 'Message sent.', 'mailkite-mailboxes' ) . '</p></div>';
 		}
 
 		$uid = isset( $_GET['uid'] ) ? absint( $_GET['uid'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only view switch.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only view switch.
+		if ( isset( $_GET['compose'] ) ) {
+			return $notice . $this->render_compose( $address );
+		}
 
 		return $notice . ( $uid ? $this->render_message( $secret, $address, $uid ) : $this->render_list( $secret, $address ) );
 	}
@@ -114,11 +119,14 @@ final class Inbox {
 		}
 		$messages = (array) ( $result['messages'] ?? [] );
 
-		$html  = '<p>' . sprintf(
-			/* translators: %s: the user's email address. */
-			esc_html__( 'Mail for %s', 'mailkite-mailboxes' ),
-			'<code>' . esc_html( $address ) . '</code>'
-		) . '</p>';
+		$html  = '<p style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+			. '<a class="button button-primary" href="' . esc_url( add_query_arg( 'compose', 1 ) ) . '">'
+			. esc_html__( 'Compose', 'mailkite-mailboxes' ) . '</a>'
+			. '<span>' . sprintf(
+				/* translators: %s: the user's email address. */
+				esc_html__( 'Mail for %s', 'mailkite-mailboxes' ),
+				'<code>' . esc_html( $address ) . '</code>'
+			) . '</span></p>';
 		$html .= '<table class="widefat striped"><thead><tr>'
 			. '<th>' . esc_html__( 'From', 'mailkite-mailboxes' ) . '</th>'
 			. '<th>' . esc_html__( 'Subject', 'mailkite-mailboxes' ) . '</th>'
@@ -203,6 +211,88 @@ final class Inbox {
 			. '</form>';
 
 		return $html;
+	}
+
+	/**
+	 * A blank message from this mailbox.
+	 *
+	 * @param string $address The user's own address (shown as the immutable sender).
+	 * @return string
+	 */
+	private function render_compose( string $address ): string {
+		$back = remove_query_arg( 'compose' );
+
+		return '<p><a href="' . esc_url( $back ) . '">&larr; ' . esc_html__( 'Back to the inbox', 'mailkite-mailboxes' ) . '</a></p>'
+			. '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="max-width:860px">'
+			. '<input type="hidden" name="action" value="mailkite_mailboxes_compose" />'
+			. '<input type="hidden" name="redirect_to" value="' . esc_attr( $back ) . '" />'
+			. wp_nonce_field( 'mailkite_mailboxes_compose', '_wpnonce', true, false )
+			. '<table class="form-table" role="presentation"><tbody>'
+			. '<tr><th scope="row">' . esc_html__( 'From', 'mailkite-mailboxes' ) . '</th>'
+				. '<td><code>' . esc_html( $address ) . '</code></td></tr>'
+			. '<tr><th scope="row"><label for="mk-compose-to">' . esc_html__( 'To', 'mailkite-mailboxes' ) . '</label></th>'
+				. '<td><input type="text" class="regular-text" id="mk-compose-to" name="to" required placeholder="someone@example.com" />'
+				. '<p class="description">' . esc_html__( 'Separate several addresses with commas.', 'mailkite-mailboxes' ) . '</p></td></tr>'
+			. '<tr><th scope="row"><label for="mk-compose-subject">' . esc_html__( 'Subject', 'mailkite-mailboxes' ) . '</label></th>'
+				. '<td><input type="text" class="regular-text" id="mk-compose-subject" name="subject" /></td></tr>'
+			. '</tbody></table>'
+			. '<textarea name="body" rows="10" class="large-text" required aria-label="' . esc_attr__( 'Message', 'mailkite-mailboxes' ) . '"></textarea>'
+			. '<p><button type="submit" class="button button-primary">' . esc_html__( 'Send', 'mailkite-mailboxes' ) . '</button></p>'
+			. '</form>';
+	}
+
+	/**
+	 * Send a new message as the user's own address (admin-post).
+	 */
+	public function handle_compose(): void {
+		if ( ! is_user_logged_in() ) {
+			wp_die( esc_html__( 'Permission denied.', 'mailkite-mailboxes' ) );
+		}
+		check_admin_referer( 'mailkite_mailboxes_compose' );
+
+		$user_id = get_current_user_id();
+		$address = Manager::address( $user_id );
+		$raw_to  = isset( $_POST['to'] ) ? sanitize_text_field( wp_unslash( $_POST['to'] ) ) : '';
+		$subject = isset( $_POST['subject'] ) ? sanitize_text_field( wp_unslash( $_POST['subject'] ) ) : '';
+		$body    = isset( $_POST['body'] ) ? sanitize_textarea_field( wp_unslash( $_POST['body'] ) ) : '';
+		$back    = isset( $_POST['redirect_to'] ) ? esc_url_raw( wp_unslash( $_POST['redirect_to'] ) ) : admin_url( 'admin.php?page=mailkite-inbox' );
+
+		if ( '' === $address ) {
+			$this->redirect( $back, __( 'You do not have a mailbox.', 'mailkite-mailboxes' ) );
+		}
+
+		// Every recipient must be a real address: one typo should be a message you can
+		// fix, not a silent partial send.
+		$recipients = [];
+		foreach ( explode( ',', $raw_to ) as $candidate ) {
+			$candidate = trim( $candidate );
+			if ( '' === $candidate ) {
+				continue;
+			}
+			if ( ! is_email( $candidate ) ) {
+				/* translators: %s: the address that failed validation. */
+				$this->redirect( $back, sprintf( __( 'That does not look like an email address: %s', 'mailkite-mailboxes' ), $candidate ) );
+			}
+			$recipients[] = $candidate;
+		}
+		if ( ! $recipients || '' === $body ) {
+			$this->redirect( $back, __( 'A recipient and a message are required.', 'mailkite-mailboxes' ) );
+		}
+		if ( ! Manager::consume_send_quota( $user_id ) ) {
+			$this->redirect( $back, __( 'You have reached your daily send limit.', 'mailkite-mailboxes' ) );
+		}
+
+		$sent = wp_mail(
+			$recipients,
+			'' !== $subject ? $subject : __( '(no subject)', 'mailkite-mailboxes' ),
+			$body,
+			[ 'From: ' . $address ] // Forced — a user can only send as their own address.
+		);
+
+		$this->redirect(
+			$sent ? add_query_arg( 'mailkite_sent', '1', $back ) : $back,
+			$sent ? '' : __( 'The message could not be sent — check the email log.', 'mailkite-mailboxes' )
+		);
 	}
 
 	/**
