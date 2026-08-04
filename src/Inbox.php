@@ -102,7 +102,12 @@ final class Inbox {
 			return $notice . $this->render_compose( $address );
 		}
 
-		return $notice . ( $uid ? $this->render_message( $secret, $address, $uid ) : $this->render_list( $secret, $address ) );
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only view switch.
+		$folder = ( isset( $_GET['folder'] ) && 'sent' === $_GET['folder'] ) ? 'Sent' : 'INBOX';
+
+		return $notice . ( $uid
+			? $this->render_message( $secret, $address, $uid, $folder )
+			: $this->render_list( $secret, $address, $folder ) );
 	}
 
 	/**
@@ -112,35 +117,50 @@ final class Inbox {
 	 * @param string $address Mailbox address.
 	 * @return string
 	 */
-	private function render_list( string $secret, string $address ): string {
-		$result = Client::list_messages( $secret, $address );
+	private function render_list( string $secret, string $address, string $mailbox = 'INBOX' ): string {
+		$result = Client::list_messages( $secret, $address, $mailbox );
 		if ( is_wp_error( $result ) ) {
 			return '<p>' . esc_html( $result->get_error_message() ) . '</p>';
 		}
 		$messages = (array) ( $result['messages'] ?? [] );
 
+		$is_sent   = 'Sent' === $mailbox;
+		$inbox_url = esc_url( remove_query_arg( [ 'folder', 'uid', 'compose' ] ) );
+		$sent_url  = esc_url( add_query_arg( 'folder', 'sent', remove_query_arg( [ 'uid', 'compose' ] ) ) );
+
 		$html  = '<p style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
 			. '<a class="button button-primary" href="' . esc_url( add_query_arg( 'compose', 1 ) ) . '">'
 			. esc_html__( 'Compose', 'mailkite-mailboxes' ) . '</a>'
+			. '<span><a href="' . $inbox_url . '" style="margin-right:10px' . ( $is_sent ? '' : ';font-weight:600' ) . '">'
+			. esc_html__( 'Inbox', 'mailkite-mailboxes' ) . '</a>'
+			. '<a href="' . $sent_url . '"' . ( $is_sent ? ' style="font-weight:600"' : '' ) . '>'
+			. esc_html__( 'Sent', 'mailkite-mailboxes' ) . '</a></span>'
+			. '<a class="button button-small" href="' . esc_url( add_query_arg( 'refreshed', time() ) ) . '">'
+			. esc_html__( 'Refresh', 'mailkite-mailboxes' ) . '</a>'
 			. '<span>' . sprintf(
 				/* translators: %s: the user's email address. */
 				esc_html__( 'Mail for %s', 'mailkite-mailboxes' ),
 				'<code>' . esc_html( $address ) . '</code>'
-			) . '</span></p>';
+			) . '</span></p>'
+			// The list reloads itself so new mail appears without a manual refresh. Only the
+			// list does this — reloading under someone reading or composing would lose it.
+			. '<script>window.setTimeout(function(){window.location.reload();}, 60000);</script>';
 		$html .= '<table class="widefat striped"><thead><tr>'
-			. '<th>' . esc_html__( 'From', 'mailkite-mailboxes' ) . '</th>'
+			. '<th>' . ( $is_sent ? esc_html__( 'To', 'mailkite-mailboxes' ) : esc_html__( 'From', 'mailkite-mailboxes' ) ) . '</th>'
 			. '<th>' . esc_html__( 'Subject', 'mailkite-mailboxes' ) . '</th>'
-			. '<th>' . esc_html__( 'Received', 'mailkite-mailboxes' ) . '</th>'
+			. '<th>' . ( $is_sent ? esc_html__( 'Sent', 'mailkite-mailboxes' ) : esc_html__( 'Received', 'mailkite-mailboxes' ) ) . '</th>'
 			. '</tr></thead><tbody>';
 
 		if ( ! $messages ) {
-			$html .= '<tr><td colspan="3">' . esc_html__( 'No mail yet.', 'mailkite-mailboxes' ) . '</td></tr>';
+			$html .= '<tr><td colspan="3">'
+				. ( $is_sent ? esc_html__( 'Nothing sent from this address yet.', 'mailkite-mailboxes' ) : esc_html__( 'No mail yet.', 'mailkite-mailboxes' ) )
+				. '</td></tr>';
 		}
 		foreach ( $messages as $m ) {
 			$unread  = ! str_contains( (string) ( $m['flags'] ?? '' ), 'Seen' );
 			$subject = (string) ( $m['subject'] ?? '' );
 			$html   .= '<tr>'
-				. '<td>' . esc_html( (string) ( $m['from_addr'] ?? '' ) ) . '</td>'
+				. '<td>' . esc_html( (string) ( $is_sent ? ( $m['to_addr'] ?? '' ) : ( $m['from_addr'] ?? '' ) ) ) . '</td>'
 				. '<td><a href="' . esc_url( add_query_arg( 'uid', (int) $m['uid'] ) ) . '">'
 					. ( $unread ? '<strong>' : '' )
 					. esc_html( '' !== $subject ? $subject : __( '(no subject)', 'mailkite-mailboxes' ) )
@@ -161,8 +181,8 @@ final class Inbox {
 	 * @param int    $uid     Message uid.
 	 * @return string
 	 */
-	private function render_message( string $secret, string $address, int $uid ): string {
-		$raw = Client::raw( $secret, $address, $uid );
+	private function render_message( string $secret, string $address, int $uid, string $mailbox = 'INBOX' ): string {
+		$raw = Client::raw( $secret, $address, $uid, $mailbox );
 		if ( is_wp_error( $raw ) ) {
 			return '<p>' . esc_html( $raw->get_error_message() ) . '</p>';
 		}
@@ -172,7 +192,7 @@ final class Inbox {
 		$subject = (string) ( $headers['subject'] ?? __( '(no subject)', 'mailkite-mailboxes' ) );
 
 		// Opening a message marks it read, exactly as an IMAP client would.
-		Client::set_flags( $secret, $address, $uid, 'Seen' );
+		Client::set_flags( $secret, $address, $uid, 'Seen', $mailbox );
 
 		$back  = remove_query_arg( 'uid' );
 		$html  = '<p><a href="' . esc_url( $back ) . '">&larr; ' . esc_html__( 'Back to the inbox', 'mailkite-mailboxes' ) . '</a></p>';
@@ -194,6 +214,10 @@ final class Inbox {
 				. wp_kses_post( $parsed['html'] ) . '</div>';
 		} else {
 			$html .= '<p>' . esc_html__( '(no readable body)', 'mailkite-mailboxes' ) . '</p>';
+		}
+
+		if ( 'Sent' === $mailbox ) {
+			return $html; // Replying to your own outgoing copy makes no sense.
 		}
 
 		// Reply — sent through the plugin's normal mailer with From forced to this user.

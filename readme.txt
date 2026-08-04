@@ -48,5 +48,6 @@ No. The From address is set by the server to the address they hold.
 = 0.1.0 =
 * Split out of MailKite SMTP 0.3.0 as its own plugin: mailbox policy, address claiming, credentials screen, Inbox screen, `[mailkite_inbox]`, reply.
 * Compose: write a new message from your mailbox, with recipient validation and the same daily send limit.
+* Inbox and Sent folders, a Refresh button, and the list refreshes itself every minute so new mail turns up on its own.
 * Change an address, or move a mailbox to the site's current domain, without losing the old one to a failed attempt.
 * All mailbox actions live on their own "Your address" screen; the profile page shows a read-only summary and links to it.
